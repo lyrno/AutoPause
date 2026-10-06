@@ -20,11 +20,11 @@ namespace process_manager
 	class ProcessManager
 	{
 	public:
-		[[nodiscard]] std::expected<void, ProcessError> suspend_process(const HANDLE handle) const;
+		[[nodiscard]] std::expected<void, ProcessError> suspend_process(const HANDLE handle) const noexcept;
 
-		[[nodiscard]] std::expected<void, ProcessError> resume_process(const HANDLE handle) const;
+		[[nodiscard]] std::expected<void, ProcessError> resume_process(const HANDLE handle) const noexcept;
 
-		[[nodiscard]] std::expected<std::vector<PROCESSENTRY32>, ProcessError> get_info_processes() const;
+		[[nodiscard]] std::expected<std::vector<PROCESSENTRY32>, ProcessError> get_info_processes() const noexcept;
 
 	private:
 	};

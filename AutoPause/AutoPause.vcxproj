@@ -139,10 +139,12 @@
     </Manifest>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="window_event_tracker.cpp" />
     <ClCompile Include="main.cpp" />
     <ClCompile Include="process_manager.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="window_event_tracker.hpp" />
     <ClInclude Include="process_manager.hpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

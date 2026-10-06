@@ -60,7 +60,7 @@ namespace
 
 namespace process_manager
 {
-	std::expected<void, ProcessError> ProcessManager::suspend_process(const HANDLE handle) const
+	std::expected<void, ProcessError> ProcessManager::suspend_process(const HANDLE handle) const noexcept
 	{
 		if (handle == INVALID_HANDLE_VALUE) return std::unexpected(ProcessError::InvalidHandle);
 
@@ -77,7 +77,7 @@ namespace process_manager
 		return {};
 	}
 
-	std::expected<void, ProcessError> ProcessManager::resume_process(const HANDLE handle) const
+	std::expected<void, ProcessError> ProcessManager::resume_process(const HANDLE handle) const noexcept
 	{
 		if (handle == INVALID_HANDLE_VALUE) return std::unexpected(ProcessError::InvalidHandle);
 
@@ -94,7 +94,7 @@ namespace process_manager
 		return {};
 	}
 
-	std::expected<std::vector<PROCESSENTRY32>, ProcessError> ProcessManager::get_info_processes() const
+	std::expected<std::vector<PROCESSENTRY32>, ProcessError> ProcessManager::get_info_processes() const noexcept
 	{
 		auto handle_snapshot = snapshot_process(TH32CS_SNAPPROCESS, 0);
 
