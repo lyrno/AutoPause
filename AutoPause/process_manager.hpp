@@ -14,15 +14,16 @@ namespace process_manager
 		ErrorGetProc,
 		ErrorSuspendProcess,
 		ErrorSnapshotProceses,
-		IterationError
+		IterationError,
+		ErrorGetInfoProcess
 	};
 
 	class ProcessManager
 	{
 	public:
 		[[nodiscard]] std::expected<void, ProcessError> suspend_process(const HANDLE handle) const noexcept;
-
 		[[nodiscard]] std::expected<void, ProcessError> resume_process(const HANDLE handle) const noexcept;
+		[[nodiscard]] std::expected<bool, ProcessError> is_suspend(const HANDLE handle) const noexcept;
 
 		[[nodiscard]] std::expected<std::vector<PROCESSENTRY32>, ProcessError> get_info_processes() const noexcept;
 

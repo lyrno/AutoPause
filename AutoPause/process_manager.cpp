@@ -3,19 +3,66 @@
 #include <string_view>
 #include <string>
 #include <memory>
+#include <winternl.h>
+#include <ntstatus.h>
 
 using pfnNtSuspendProcess = NTSTATUS(NTAPI*)(HANDLE ProcessHandle);
 
 using pfnNtResumeProcess = NTSTATUS(NTAPI*)(HANDLE ProcessHandle);
 
+using pfnNtQuerySystemInformation = NTSTATUS(NTAPI*)(SYSTEM_INFORMATION_CLASS SystemInformationClass, PVOID SystemInformation, ULONG SystemInformationLength, PULONG ReturnLength);
+
+typedef struct _AUTOPAUSE_SYSTEM_PROCESS_INFORMATION {
+	ULONG NextEntryOffset;
+	ULONG NumberOfThreads;
+	ULONGLONG WorkingSetPrivateSize;
+	ULONG HardFaultCount;
+	ULONG NumberOfThreadsHighWatermark;
+	ULONGLONG CycleTime;
+	LARGE_INTEGER CreateTime;
+	LARGE_INTEGER UserTime;
+	LARGE_INTEGER KernelTime;
+	UNICODE_STRING ImageName;
+	KPRIORITY BasePriority;
+	HANDLE UniqueProcessId;
+	HANDLE InheritedFromUniqueProcessId;
+	ULONG HandleCount;
+	ULONG SessionId;
+	ULONG_PTR UniqueProcessKey;
+	SIZE_T PeakVirtualSize;
+	SIZE_T VirtualSize;
+	ULONG PageFaultCount;
+	SIZE_T PeakWorkingSetSize;
+	SIZE_T WorkingSetSize;
+	SIZE_T QuotaPeakPagedPoolUsage;
+	SIZE_T QuotaPagedPoolUsage;
+	SIZE_T QuotaPeakNonPagedPoolUsage;
+	SIZE_T QuotaNonPagedPoolUsage;
+	SIZE_T PagefileUsage;
+	SIZE_T PeakPagefileUsage;
+	SIZE_T PrivatePageCount;
+	LARGE_INTEGER ReadOperationCount;
+	LARGE_INTEGER WriteOperationCount;
+	LARGE_INTEGER OtherOperationCount;
+	LARGE_INTEGER ReadTransferCount;
+	LARGE_INTEGER WriteTransferCount;
+	LARGE_INTEGER OtherTransferCount;
+	SYSTEM_THREAD_INFORMATION Threads[1];
+} AUTOPAUSE_SYSTEM_PROCESS_INFORMATION, * PAUTOPAUSE_SYSTEM_PROCESS_INFORMATION;
+
 namespace
 {
+	constexpr ULONG system_thread_state_waiting = 5;
+	constexpr ULONG system_thread_wait_reason_suspended = 5;
+
 	enum class ErrorManagerHelper
 	{
 		InvalidIdentifier,
 		ErrorGetModuleHandle,
 		ErrorGetProcAddr,
-		ErrorSnapshot
+		ErrorSnapshot,
+		ErrorGetLength,
+		ErrorGetInfoProcess
 	};
 
 	[[nodiscard]] std::expected<FARPROC, ErrorManagerHelper> get_ntdll_proc(std::string_view name_proc)
@@ -56,6 +103,40 @@ namespace
 
 		return auto_delete_handle(handle_snapshot);
 	}
+
+	[[nodiscard]] std::expected<std::unique_ptr<std::byte[]>, ErrorManagerHelper> query_system_information() noexcept
+	{
+		auto proc_addr = get_ntdll_proc("NtQuerySystemInformation");
+		if (!proc_addr) return std::unexpected(ErrorManagerHelper::ErrorGetInfoProcess);
+
+		const auto nt_query_system_information = reinterpret_cast<pfnNtQuerySystemInformation>(*proc_addr);
+		ULONG return_length{};
+
+		NTSTATUS status = nt_query_system_information
+		(
+			SystemProcessInformation,
+			nullptr,
+			0,
+			&return_length
+		);
+
+		if (status != STATUS_INFO_LENGTH_MISMATCH) return std::unexpected(ErrorManagerHelper::ErrorGetLength);
+
+		auto unique_buffer = std::make_unique<std::byte[]>(return_length);
+
+		status = nt_query_system_information
+		(
+			SystemProcessInformation,
+			unique_buffer.get(),
+			return_length,
+			nullptr
+		);
+
+		if (!NT_SUCCESS(status)) return std::unexpected(ErrorManagerHelper::ErrorGetInfoProcess);
+
+		return unique_buffer;
+	}
+
 }
 
 namespace process_manager
@@ -117,4 +198,46 @@ namespace process_manager
 
 		return info_processes;
 	}
+
+
+
+	[[nodiscard]] std::expected<bool, ProcessError> ProcessManager::is_suspend(const HANDLE handle) const noexcept
+	{
+		if (!handle || handle == INVALID_HANDLE_VALUE) return std::unexpected(ProcessError::InvalidHandle);
+
+		auto result = query_system_information();
+
+		if (!result) return std::unexpected(ProcessError::ErrorGetInfoProcess);
+
+		std::unique_ptr<std::byte[]> buffer = std::move(*result);
+
+		const DWORD process_id = GetProcessId(handle);
+		if (process_id == 0) return std::unexpected(ProcessError::InvalidHandle);
+
+		auto* process_info = reinterpret_cast<PAUTOPAUSE_SYSTEM_PROCESS_INFORMATION>(buffer.get());
+		while (process_info != nullptr)
+		{
+			if (reinterpret_cast<ULONG_PTR>(process_info->UniqueProcessId) == static_cast<ULONG_PTR>(process_id))
+			{
+				for (ULONG i = 0; i < process_info->NumberOfThreads; ++i)
+				{
+					const auto& thread = process_info->Threads[i];
+					if (thread.ThreadState != system_thread_state_waiting ||
+						thread.WaitReason != system_thread_wait_reason_suspended)
+					{
+						return true;
+					}
+				}
+
+				return process_info->NumberOfThreads == 0;
+			}
+
+			if (process_info->NextEntryOffset == 0) break;
+			process_info = reinterpret_cast<PAUTOPAUSE_SYSTEM_PROCESS_INFORMATION>(
+				reinterpret_cast<std::byte*>(process_info) + process_info->NextEntryOffset);
+		}
+
+		return std::unexpected(ProcessError::ErrorGetInfoProcess);
+	}
+
 }
