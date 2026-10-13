@@ -62,7 +62,8 @@ namespace
 		ErrorGetProcAddr,
 		ErrorSnapshot,
 		ErrorGetLength,
-		ErrorGetInfoProcess
+		ErrorGetInfoProcess,
+		GetProcessId
 	};
 
 	[[nodiscard]] std::expected<FARPROC, ErrorManagerHelper> get_ntdll_proc(std::string_view name_proc)
@@ -137,13 +138,47 @@ namespace
 		return unique_buffer;
 	}
 
+	[[nodiscard]] std::expected<ULONG_PTR, ErrorManagerHelper> get_process_id(const HANDLE handle) noexcept
+	{
+		if (!handle || handle == INVALID_HANDLE_VALUE) return std::unexpected(ErrorManagerHelper::GetProcessId);
+
+		DWORD process_id = GetProcessId(handle);
+
+		if (process_id == 0) return std::unexpected(ErrorManagerHelper::GetProcessId);
+
+		return static_cast<ULONG_PTR>(process_id);
+	}
+
+	[[nodiscard]] ULONG_PTR get_process_id(const AUTOPAUSE_SYSTEM_PROCESS_INFORMATION& process_info) noexcept
+	{
+		return reinterpret_cast<ULONG_PTR>(process_info.UniqueProcessId);
+	}
+
+	[[nodiscard]] bool is_process_suspended(const PAUTOPAUSE_SYSTEM_PROCESS_INFORMATION& process_info) noexcept
+	{
+		for (ULONG i = 0; i < process_info->NumberOfThreads; ++i)
+		{
+			const auto& thread = process_info->Threads[i];
+			if  (
+					thread.ThreadState != system_thread_state_waiting ||
+					thread.WaitReason != system_thread_wait_reason_suspended
+				) return false;
+		}
+
+		return true;
+	}
+
+	[[nodiscard]] PAUTOPAUSE_SYSTEM_PROCESS_INFORMATION next_process_info(const PAUTOPAUSE_SYSTEM_PROCESS_INFORMATION& process_info) noexcept
+	{
+		return reinterpret_cast<PAUTOPAUSE_SYSTEM_PROCESS_INFORMATION>(reinterpret_cast<std::byte*>(process_info) + process_info->NextEntryOffset);
+	}
 }
 
 namespace process_manager
 {
 	std::expected<void, ProcessError> ProcessManager::suspend_process(const HANDLE handle) const noexcept
 	{
-		if (handle == INVALID_HANDLE_VALUE) return std::unexpected(ProcessError::InvalidHandle);
+		if (!handle || handle == INVALID_HANDLE_VALUE) return std::unexpected(ProcessError::InvalidHandle);
 
 		auto addr_proc = get_ntdll_proc("NtSuspendProcess");
 
@@ -160,7 +195,7 @@ namespace process_manager
 
 	std::expected<void, ProcessError> ProcessManager::resume_process(const HANDLE handle) const noexcept
 	{
-		if (handle == INVALID_HANDLE_VALUE) return std::unexpected(ProcessError::InvalidHandle);
+		if (!handle || handle == INVALID_HANDLE_VALUE) return std::unexpected(ProcessError::InvalidHandle);
 
 		auto addr_proc = get_ntdll_proc("NtResumeProcess");
 
@@ -211,30 +246,24 @@ namespace process_manager
 
 		std::unique_ptr<std::byte[]> buffer = std::move(*result);
 
-		const DWORD process_id = GetProcessId(handle);
-		if (process_id == 0) return std::unexpected(ProcessError::InvalidHandle);
-
 		auto* process_info = reinterpret_cast<PAUTOPAUSE_SYSTEM_PROCESS_INFORMATION>(buffer.get());
-		while (process_info != nullptr)
-		{
-			if (reinterpret_cast<ULONG_PTR>(process_info->UniqueProcessId) == static_cast<ULONG_PTR>(process_id))
-			{
-				for (ULONG i = 0; i < process_info->NumberOfThreads; ++i)
-				{
-					const auto& thread = process_info->Threads[i];
-					if (thread.ThreadState != system_thread_state_waiting ||
-						thread.WaitReason != system_thread_wait_reason_suspended)
-					{
-						return true;
-					}
-				}
 
-				return process_info->NumberOfThreads == 0;
+		while (process_info)
+		{
+			auto process_id = get_process_id(handle);
+			if (!process_id) return std::unexpected(ProcessError::ErrorGetInfoProcess);
+
+			auto unique_process_id = get_process_id(*process_info);
+
+			if (unique_process_id == *process_id)
+			{
+				if (is_process_suspended(process_info)) return true;
+				else return false;
 			}
 
 			if (process_info->NextEntryOffset == 0) break;
-			process_info = reinterpret_cast<PAUTOPAUSE_SYSTEM_PROCESS_INFORMATION>(
-				reinterpret_cast<std::byte*>(process_info) + process_info->NextEntryOffset);
+
+			process_info = next_process_info(process_info);
 		}
 
 		return std::unexpected(ProcessError::ErrorGetInfoProcess);
