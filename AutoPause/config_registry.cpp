@@ -1,5 +1,6 @@
 #include "config_registry.hpp"
 
+#include <algorithm>
 #include <fstream>
 #include <iomanip>
 #include <sstream>
@@ -15,6 +16,14 @@ namespace
 		std::filesystem::path config_path;
 		std::string config_resolver;
 	};
+
+	[[nodiscard]] bool is_valid_entry(const std::filesystem::path& config_path, const std::string& config_resolver)
+	{
+		if (config_path.empty() || config_resolver.empty() || config_resolver.find_first_of("\r\n") != std::string::npos)
+			return false;
+
+		return config_path.string().find_first_of("\r\n") == std::string::npos;
+	}
 
 	[[nodiscard]] std::expected<RegistryEntry, configRegistry::ErrorRegistry> get_entry_from_line(const std::string& line)
 	{
@@ -168,13 +177,7 @@ namespace configRegistry
 	[[nodiscard]] std::expected<void, ErrorRegistry> ConfigRegistry::add_path(const std::filesystem::path& config_path, const std::string& config_resolver)
 	{
 		if (_used_config_path.empty()) return std::unexpected(ErrorRegistry::ConfigNotInitialized);
-		if (config_path.empty() || config_resolver.empty() || config_resolver.find_first_of("\r\n") != std::string::npos)
-			return std::unexpected(ErrorRegistry::IncorrectData);
-
-		const std::string path_string = config_path.string();
-
-		if (path_string.find_first_of("\r\n") != std::string::npos)
-			return std::unexpected(ErrorRegistry::IncorrectData);
+		if (!is_valid_entry(config_path, config_resolver)) return std::unexpected(ErrorRegistry::IncorrectData);
 
 		if (_resolver_map.contains(config_resolver))
 			return std::unexpected(ErrorRegistry::ResolverAlreadyRegistered);
@@ -186,6 +189,35 @@ namespace configRegistry
 			return std::unexpected(result.error());
 
 		update_map(std::move(updated_map));
+		return {};
+	}
+
+	[[nodiscard]] std::expected<void, ErrorRegistry> ConfigRegistry::update_path(const std::filesystem::path& config_path, const std::string& config_resolver)
+	{
+		if (_used_config_path.empty()) return std::unexpected(ErrorRegistry::ConfigNotInitialized);
+		if (!is_valid_entry(config_path, config_resolver)) return std::unexpected(ErrorRegistry::IncorrectData);
+
+		auto entries = read_entries(_used_config_path);
+
+		if (!entries) return std::unexpected(entries.error());
+
+		auto entry = std::find_if(entries->begin(), entries->end(), [&config_resolver](const RegistryEntry& current_entry)
+		{
+			return current_entry.config_resolver == config_resolver;
+		});
+
+		if (entry == entries->end()) return std::unexpected(ErrorRegistry::ResolverNotFound);
+
+		entry->config_path = config_path;
+
+		auto updated_map = build_resolver_map(*entries);
+
+		if (!updated_map) return std::unexpected(updated_map.error());
+
+		if (auto result = write_entries(_used_config_path, *entries); !result)
+			return std::unexpected(result.error());
+
+		update_map(std::move(*updated_map));
 		return {};
 	}
 

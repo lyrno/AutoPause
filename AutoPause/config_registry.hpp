@@ -22,7 +22,8 @@ namespace configRegistry
 		FailedRemoveFail,
 		FailedWriteFile,
 		ConfigNotInitialized,
-		ResolverAlreadyRegistered
+		ResolverAlreadyRegistered,
+		ResolverNotFound
 	};
 
 	class ConfigRegistry
@@ -36,6 +37,7 @@ namespace configRegistry
 
 		[[nodiscard]] std::expected<void, ErrorRegistry> init(const std::filesystem::path& init_path);
 		[[nodiscard]] std::expected<void, ErrorRegistry> add_path(const std::filesystem::path& config_path, const std::string& config_resolver);
+		[[nodiscard]] std::expected<void, ErrorRegistry> update_path(const std::filesystem::path& config_path, const std::string& config_resolver);
 		[[nodiscard]] std::expected<void, ErrorRegistry> delete_path(const std::filesystem::path& config_path);
 		[[nodiscard]] const resolver_map& get_resolver_map() const noexcept;
 		[[nodiscard]] std::optional<std::filesystem::path> find_path_by_resolver(const std::string& config_resolver) const;
